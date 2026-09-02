@@ -27,7 +27,7 @@ const PIM_MAX_AGE_MS = 6 * 60 * 60 * 1000
 
 type PimEventKind = 'focus' | 'tick' | 'visit' | 'run' | 'media'
 
-export type PimEvent = {
+type PimEvent = {
     kind: PimEventKind
     host: string
     /** epoch ms; focus/tick */
@@ -104,7 +104,7 @@ async function postBatch(base: string, batch: PimEvent[]): Promise<void> {
     }
 }
 
-export async function flush(): Promise<void> {
+async function flush(): Promise<void> {
     await loadBuffer()
     if (!buffer.length) return
     const enabled = await isEnabled()

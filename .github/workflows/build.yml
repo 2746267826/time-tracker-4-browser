@@ -23,7 +23,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          cache: npm
+          # 上游未提交 package-lock.json，无法启用 setup-node 的 npm 缓存
 
       - name: Resolve version
         id: ver
