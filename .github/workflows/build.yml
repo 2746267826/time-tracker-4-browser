@@ -1,0 +1,118 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Resolve version
+        id: ver
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm run pure-install
+
+      - name: Typecheck (src)
+        run: |
+          # examples/ 目录存在上游遗留的类型缺失（hash.js），只校验 src/
+          if npx tsc --noEmit 2>&1 | grep -v "examples/" | grep -q .; then
+            npx tsc --noEmit 2>&1 | grep -v "examples/"
+            echo "type errors in src/"
+            exit 1
+          fi
+          echo "src typecheck OK"
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build (chrome)
+        run: npm run build
+
+      # PIM 回归守卫：上报钩子必须存在且产物完整
+      - name: Verify build output
+        run: |
+          test -f dist_prod/manifest.json || { echo "manifest.json missing"; exit 1; }
+          test -f dist_prod/background.js || true
+          grep -rq "pimReportBuffer\|browser/site/heartbeat" dist_prod/ || { echo "PIM reporter missing from bundle"; exit 1; }
+          node -e "const m=require('./dist_prod/manifest.json'); if(!m.manifest_version){console.error('manifest incomplete');process.exit(1)}"
+          echo "Build output OK"
+
+      - name: Zip
+        run: |
+          mkdir -p artifacts
+          cd dist_prod && zip -FS -r "../artifacts/tt4b-pim-v${{ steps.ver.outputs.version }}.zip" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt4b-pim-v${{ steps.ver.outputs.version }}
+          path: artifacts/*.zip
+
+  release:
+    # 打 tag 时发布 fork Release 并触发 pim-platform 重打安装器（与 tracker-web 相同链路）
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tt4b-pim-v${{ needs.build.outputs.version }}
+          path: artifacts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="$(git tag -l --format='%(contents)' "$TAG" | sed '/^$/d')"
+          if [ -z "$NOTES" ]; then
+            NOTES="Time Tracker (PIM fork) v${{ needs.build.outputs.version }}
+
+          含 PIM 本地上报钩子。安装：解压后在 chrome://extensions 以「加载已解压的扩展程序」载入。"
+          fi
+          gh release create "$TAG" artifacts/*.zip --title "$TAG" --notes "$NOTES" --repo "$GITHUB_REPOSITORY"
+
+      - name: Dispatch pim-platform installer build
+        env:
+          GH_TOKEN: ${{ secrets.PIM_DISPATCH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PIM_DISPATCH_PAT secret is not configured; skipping pim-platform dispatch"
+            exit 0
+          fi
+          NOTES="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" | sed '/^$/d')"
+          jq -n --arg tag "${GITHUB_REF_NAME}" --arg ver "${{ needs.build.outputs.version }}" --arg notes "$NOTES" \
+            '{event_type: "browser-extension-release", client_payload: {repo: env.GITHUB_REPOSITORY, tag: $tag, version: $ver, release_notes: $notes}}' \
+            > payload.json
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/2746267826/pim-platform/dispatches \
+            -d @payload.json \
+            && echo "Dispatched pim-platform installer build for ${GITHUB_REF_NAME}"

@@ -1,4 +1,5 @@
 import timelineDatabase from '@db/timeline-database'
+import { pimReporter } from '@service/pim-reporter'
 import { extractHostname } from '@util/pattern'
 import { FirefoxThrottler } from './firefox-throttler'
 
@@ -10,6 +11,8 @@ class TimelineThrottler extends FirefoxThrottler<tt4b.timeline.Tick> {
 
         const durations = split2Durations(start, end)
         const ticks: tt4b.timeline.Tick[] = durations.map(([start, duration]) => ({ start, duration, host }))
+        // PIM: report domain-level time ticks
+        ticks.forEach(({ host, start, duration }) => pimReporter.reportTick(host, start, duration))
         this.save(ticks)
     }
 

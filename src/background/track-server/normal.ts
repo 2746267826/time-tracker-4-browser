@@ -5,6 +5,7 @@ import {
     addFocusTime as addItemFocusTime, increaseVisit as increaseItemVisit, type ItemIncContext,
 } from "@service/item-service"
 import { addLimitFocusTime, incLimitVisit } from '@service/limit-service'
+import { pimReporter } from '@service/pim-reporter'
 import siteHolder from '@service/site-service/holder'
 import periodThrottler from '@service/throttler/period-throttler'
 import { IS_ANDROID } from "@util/constant/environment"
@@ -17,6 +18,8 @@ async function handleTime(context: ItemIncContext, timeRange: [number, number], 
     const focusTime = end - start
     // 1. Save async
     await addItemFocusTime(context, focusTime)
+    // PIM: report domain-level focus segment to the local PIM daemon
+    pimReporter.reportFocus(host, start, end)
     // 2. Process limit
     const { limited, reminder } = await addLimitFocusTime(host, url, focusTime)
     // If time limited after this operation, send messages
@@ -81,6 +84,8 @@ async function sendLimitedMessage(items: tt4b.limit.Item[]) {
 
 async function handleVisit(context: ItemIncContext) {
     await increaseItemVisit(context)
+    // PIM: report domain-level visit
+    pimReporter.reportVisit(context.host)
     const { host, url } = context
     const metLimits = await incLimitVisit(host, url)
     // If time limited after this operation, send messages
