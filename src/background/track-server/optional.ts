@@ -1,6 +1,7 @@
 import FIFOCache from '@util/fifo-cache'
 import { formatTimeYMD, getStartOfDay, MILL_PER_DAY } from "@util/time"
 import { addMediaTime, addRunTime } from '../service/item-service'
+import { pimReporter } from '@service/pim-reporter'
 
 function splitTime2Dates(start: number, end: number): Record<string, number> {
     const res: Record<string, number> = {}
@@ -23,6 +24,8 @@ export async function handleRunTime(event: tt4b.core.Event): Promise<void> {
     const byDate = splitTime2Dates(realStart, end)
     if (!Object.keys(byDate).length) return
     await addRunTime(host, byDate)
+    // PIM: report per-date run time
+    pimReporter.reportRun(host, byDate)
     RUN_TIME_END_CACHE.set(host, Math.max(end, realStart))
 }
 
@@ -35,5 +38,7 @@ export async function handleMediaTime(event: tt4b.core.Event): Promise<void> {
     const byDate = splitTime2Dates(realStart, end)
     if (!Object.keys(byDate).length) return
     await addMediaTime(host, byDate)
+    // PIM: report per-date media time
+    pimReporter.reportMedia(host, byDate)
     MEDIA_TIME_END_CACHE.set(host, Math.max(end, realStart))
 }
